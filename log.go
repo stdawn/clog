@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -64,71 +65,105 @@ func (l Level) ColorPrinter() color.PrinterFace {
 	}[l.Value()]
 }
 
-type Logger struct {
-	ConsolePrintWhenHasFile bool        //打印到文件时是否打印到控制台
-	minLevel                Level       //打印的最小等级
-	fileLogger              *log.Logger //文件Logger
-	file                    *os.File    //文件
+// NewLevel 从Int值获取等级
+func NewLevel(v int) Level {
+	if v < DebugLevel.Value() {
+		return DebugLevel
+	}
+	if v > FatalLevel.Value() {
+		return FatalLevel
+	}
+	return Level(v)
 }
 
-func New(level Level, pathname string, flag int) (*Logger, error) {
+type consoleWriter struct {
+}
 
-	// logger
+func (c *consoleWriter) Write(p []byte) (n int, err error) {
+
+	s := string(p)
+	l, err := strconv.ParseInt(s[len(s)-3:len(s)-1], 10, 16)
+	if err != nil {
+		return 0, err
+	}
+	printLevel := NewLevel(int(l))
+
+	printLevel.ColorPrinter().Printf("%s%s", s[:len(s)-3], s[len(s)-1:])
+	return len(p), nil
+}
+
+type Logger struct {
+	//打印到文件时是否打印到控制台, true-不打印, false打印
+	ConsoleNotPrintWhenHasFile bool
+
+	minLevel      Level       //打印的最小等级
+	fileLogger    *log.Logger //文件Logger
+	file          *os.File    //文件
+	consoleLogger *log.Logger //控制台Logger
+
+}
+
+func New(level Level, logDir string, logFlag int) (*Logger, error) {
+
+	// l
 	var fileLogger *log.Logger
 	var file *os.File
-	if pathname != "" {
+	if logDir != "" {
 		now := time.Now()
 
 		filename := fmt.Sprintf("%d%02d%02d_%02d_%02d_%02d.log",
-			now.Year(),
-			now.Month(),
-			now.Day(),
-			now.Hour(),
-			now.Minute(),
-			now.Second())
+			now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), now.Second())
 
-		f, err := os.Create(filepath.Join(pathname, filename))
+		f, err := os.Create(filepath.Join(logDir, filename))
 		if err != nil {
 			return nil, err
 		}
 
-		fileLogger = log.New(f, "", flag)
+		fileLogger = log.New(f, "", logFlag)
 		file = f
 	}
 
 	// new
-	logger := new(Logger)
-	logger.minLevel = level
-	logger.fileLogger = fileLogger
-	logger.file = file
-	logger.ConsolePrintWhenHasFile = true
+	l := new(Logger)
+	l.minLevel = level
+	l.fileLogger = fileLogger
+	l.file = file
+	l.consoleLogger = log.New(new(consoleWriter), "", logFlag)
 
-	return logger, nil
+	return l, nil
+}
+
+// SetLoggerFlag 设置Logger的Flag，不设置时默认为log.LstdFlags
+func (l *Logger) SetLoggerFlag(flag int) {
+	l.fileLogger.SetFlags(flag)
+	l.consoleLogger.SetFlags(flag)
 }
 
 // Close It's dangerous to call the method on logging
-func (logger *Logger) Close() {
-	if logger.file != nil {
-		_ = logger.file.Close()
+func (l *Logger) Close() {
+	if l.file != nil {
+		_ = l.file.Close()
 	}
 
-	logger.fileLogger = nil
-	logger.file = nil
+	l.fileLogger = nil
+	l.file = nil
 }
 
-func (logger *Logger) DoPrintf(printLevel Level, format string, a ...interface{}) {
-	if printLevel < logger.minLevel {
+func (l *Logger) DoPrintf(printLevel Level, format string, a ...interface{}) {
+	if printLevel < l.minLevel {
 		return
 	}
 
 	format = printLevel.Prefix() + format
-	if logger.fileLogger != nil {
-		_ = logger.fileLogger.Output(3, fmt.Sprintf(format, a...))
+	if l.fileLogger != nil {
+		_ = l.fileLogger.Output(3, fmt.Sprintf(format, a...))
 	}
 
-	if logger.fileLogger == nil || logger.ConsolePrintWhenHasFile {
-		format = time.Now().Format("2006/01/02 15:04:05 ") + format
-		printLevel.ColorPrinter().Printf(format, a...)
+	if l.fileLogger == nil || !l.ConsoleNotPrintWhenHasFile {
+
+		format += fmt.Sprintf("%02d", printLevel.Value())
+		_ = l.consoleLogger.Output(3, fmt.Sprintf(format, a...))
+
 	}
 
 	if printLevel == FatalLevel {
