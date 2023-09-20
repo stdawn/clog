@@ -24,7 +24,7 @@ func TestAll(t *testing.T) {
 	dir := filepath.Dir(p)
 
 	l, _ := New(DebugLevel, dir, log.LstdFlags)
-	l.ConsoleNotPrintWhenHasFile = true
+	l.ConsoleNotPrintWhenHasFile = false
 	Export(l)
 
 	Debug(DebugLevel.Prefix())

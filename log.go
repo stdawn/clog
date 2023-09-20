@@ -14,7 +14,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
+	"sync"
 	"time"
 )
 
@@ -77,30 +77,25 @@ func NewLevel(v int) Level {
 }
 
 type consoleWriter struct {
+	content string
 }
 
 func (c *consoleWriter) Write(p []byte) (n int, err error) {
-
-	s := string(p)
-	l, err := strconv.ParseInt(s[len(s)-3:len(s)-1], 10, 16)
-	if err != nil {
-		return 0, err
-	}
-	printLevel := NewLevel(int(l))
-
-	printLevel.ColorPrinter().Printf("%s%s", s[:len(s)-3], s[len(s)-1:])
+	c.content = string(p)
 	return len(p), nil
 }
 
 type Logger struct {
+	sync.Mutex
+
 	//打印到文件时是否打印到控制台, true-不打印, false打印
 	ConsoleNotPrintWhenHasFile bool
 
-	minLevel      Level       //打印的最小等级
-	fileLogger    *log.Logger //文件Logger
-	file          *os.File    //文件
-	consoleLogger *log.Logger //控制台Logger
-
+	minLevel      Level          //打印的最小等级
+	fileLogger    *log.Logger    //文件Logger
+	file          *os.File       //文件
+	consoleLogger *log.Logger    //控制台Logger
+	console       *consoleWriter //控制台Writer
 }
 
 func New(level Level, logDir string, logFlag int) (*Logger, error) {
@@ -128,12 +123,14 @@ func New(level Level, logDir string, logFlag int) (*Logger, error) {
 	l.minLevel = level
 	l.fileLogger = fileLogger
 	l.file = file
-	l.consoleLogger = log.New(new(consoleWriter), "", logFlag)
+
+	l.console = new(consoleWriter)
+	l.consoleLogger = log.New(l.console, "", logFlag)
 
 	return l, nil
 }
 
-// SetLoggerFlag 设置Logger的Flag，不设置时默认为log.LstdFlags
+// SetLoggerFlag 设置Logger的Flag
 func (l *Logger) SetLoggerFlag(flag int) {
 	l.fileLogger.SetFlags(flag)
 	l.consoleLogger.SetFlags(flag)
@@ -160,10 +157,10 @@ func (l *Logger) DoPrintf(printLevel Level, format string, a ...interface{}) {
 	}
 
 	if l.fileLogger == nil || !l.ConsoleNotPrintWhenHasFile {
-
-		format += fmt.Sprintf("%02d", printLevel.Value())
+		l.Mutex.Lock()
 		_ = l.consoleLogger.Output(3, fmt.Sprintf(format, a...))
-
+		printLevel.ColorPrinter().Printf(l.console.content)
+		l.Mutex.Unlock()
 	}
 
 	if printLevel == FatalLevel {
